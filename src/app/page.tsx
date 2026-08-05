@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Select from "react-select";
 import { STATIONS, type StationId } from "@/data/stations";
@@ -72,7 +72,7 @@ function saveToStorage<T>(key: string, value: T): void {
   }
 }
 
-export default function HomePage() {
+function MetroPlanner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -586,8 +586,9 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => toggleFavorite(data.from.id, data.to.id)}
-                    className={`action-btn ${isFavorite ? "text-rose-400" : "text-slate-400"
-                      }`}
+                    className={`action-btn ${
+                      isFavorite ? "text-rose-400" : "text-slate-400"
+                    }`}
                     title={
                       isFavorite ? "Remove from favorites" : "Add to favorites"
                     }
@@ -785,10 +786,11 @@ export default function HomePage() {
                               )}
                             </div>
                             <span
-                              className={`text-sm ${i === 0 || i === seg.stations.length - 1
-                                ? "font-semibold text-white"
-                                : "text-slate-400"
-                                }`}
+                              className={`text-sm ${
+                                i === 0 || i === seg.stations.length - 1
+                                  ? "font-semibold text-white"
+                                  : "text-slate-400"
+                              }`}
                             >
                               {st.name}
                               {i === 0 && idx === 0 && (
@@ -861,6 +863,14 @@ export default function HomePage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-white">Loading planner...</div>}>
+      <MetroPlanner />
+    </Suspense>
   );
 }
 
