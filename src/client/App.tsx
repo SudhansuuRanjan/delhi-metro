@@ -2,12 +2,14 @@ import { Routes, Route, Link } from "react-router-dom";
 import HomePage from "./pages/HomePage";
 import LinePage from "./pages/LinePage";
 import StationPage from "./pages/StationPage";
+import NetworkMapPage from "./pages/NetworkMapPage";
 
 export default function App() {
   return (
     <main className="min-h-screen text-white relative z-10">
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/map" element={<NetworkMapPage />} />
         <Route path="/line/:code" element={<LinePage />} />
         <Route path="/station/:code" element={<StationPage />} />
         <Route

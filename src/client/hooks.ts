@@ -4,6 +4,7 @@ import {
   fetchLines,
   fetchLineStations,
   fetchStation,
+  fetchNetwork,
   planRoute,
   fetchStatus,
   type StationRef,
@@ -11,6 +12,7 @@ import {
   type RouteResult,
   type StationDetail,
   type LineStation,
+  type NetworkLine,
 } from "./api";
 
 export function useStationSearch(q: string) {
@@ -57,6 +59,14 @@ export function useStation(code: string) {
 export function useRouteMutation() {
   return useMutation<RouteResult, Error, { from: string; to: string }>({
     mutationFn: ({ from, to }) => planRoute(from, to),
+  });
+}
+
+export function useNetwork() {
+  return useQuery<NetworkLine[]>({
+    queryKey: ["network"],
+    queryFn: () => fetchNetwork().then((n) => n.lines),
+    staleTime: 30 * 60 * 1000,
   });
 }
 

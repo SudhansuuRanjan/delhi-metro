@@ -24,6 +24,9 @@ export const stations = sqliteTable("stations", {
   stationType: text("station_type"),
   interchange: integer("interchange", { mode: "boolean" }).default(false),
   status: text("status"),
+  /** Station opening/closing hours ("HH:MM:SS") from the DMRC payload. */
+  openingTime: text("opening_time"),
+  closingTime: text("closing_time"),
 });
 
 export const stationLines = sqliteTable(
@@ -73,6 +76,26 @@ export const stationTimings = sqliteTable("station_timings", {
   firstTrain: text("first_train"),
   lastTrain: text("last_train"),
 });
+
+/**
+ * Per-day first/last train per travel direction, from DMRC `first_last_train`:
+ * one row per (station, day group, towards-terminal). Day groups are
+ * "weekdays" | "saturday" | "sunday". Times are display strings like "04:00AM".
+ */
+export const stationDayTimings = sqliteTable(
+  "station_day_timings",
+  {
+    stationCode: text("station_code")
+      .notNull()
+      .references(() => stations.stationCode, { onDelete: "cascade" }),
+    dayGroup: text("day_group").notNull(),
+    towardsCode: text("towards_code"),
+    towardsName: text("towards_name"),
+    firstTrainTime: text("first_train_time"),
+    lastTrainTime: text("last_train_time"),
+  },
+  (t) => [primaryKey({ columns: [t.stationCode, t.dayGroup, t.towardsCode] })]
+);
 
 /**
  * Platform number per station + line + direction, derived from the DMRC

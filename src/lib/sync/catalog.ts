@@ -18,11 +18,24 @@ export interface SyncStation {
   stationType: string | null;
   interchange: boolean;
   status: string | null;
+  openingTime: string | null;
+  closingTime: string | null;
   lines: { lineCode: string; orderIndex: number }[];
   firstTrain: string | null;
   lastTrain: string | null;
+  /** Per-day first/last train per travel direction (weekdays/saturday/sunday). */
+  dayTimings: SyncDayTiming[];
   /** Rich metadata from the station detail endpoint. */
   facilities: SyncStationFacilities;
+}
+
+/** One per-day first/last train entry pointing at a travel direction. */
+export interface SyncDayTiming {
+  dayGroup: "weekdays" | "saturday" | "sunday";
+  towardsCode: string | null;
+  towardsName: string | null;
+  firstTrainTime: string | null;
+  lastTrainTime: string | null;
 }
 
 export interface SyncStationFacilities {
@@ -232,6 +245,7 @@ export async function fetchCatalog(): Promise<SyncCatalog> {
     const lastTrain = firstLast
       .flatMap((g) => [...(g.weekdays ?? []), ...(g.saturday ?? []), ...(g.sunday ?? [])])
       .find((x) => typeof x === "object" && x !== null && (x as { last_train?: string }).last_train);
+    const dayTimings = extractDayTimings(d?.first_last_train);
     return {
       stationCode: code,
       name: d?.station_name ?? findStationName(code) ?? code,
@@ -243,9 +257,12 @@ export async function fetchCatalog(): Promise<SyncCatalog> {
       stationType: d?.station_type ?? null,
       interchange: d?.interchange ?? findInterchange(code) ?? false,
       status: d?.status ?? findStatus(code) ?? null,
+      openingTime: d?.opening_time ?? null,
+      closingTime: d?.closing_time ?? null,
       lines: linesOnStation,
       firstTrain: (firstTrain as { first_train?: string } | undefined)?.first_train ?? null,
       lastTrain: (lastTrain as { last_train?: string } | undefined)?.last_train ?? null,
+      dayTimings,
       facilities: extractFacilities(d),
     };
   });
@@ -351,6 +368,49 @@ function parsePlatformNo(name: string | null): number | null {
   if (!name) return null;
   const m = name.match(/No\.?\s*(\d+)/i);
   return m ? parseInt(m[1], 10) : null;
+}
+
+/** Extract per-day first/last train entries from DMRC `first_last_train`.
+ * Shape: [{ weekdays: [{ towards: {station_code, station_name},
+ * first_train_time, last_train_time }] }, { saturday: [...] }, { sunday: [...] }].
+ * Entries without times are skipped; stations with no data yield []. */
+export function extractDayTimings(
+  raw: DmrcStationDetail["first_last_train"] | undefined
+): SyncDayTiming[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SyncDayTiming[] = [];
+  const seen = new Set<string>();
+  const groups = ["weekdays", "saturday", "sunday"] as const;
+  for (const group of raw) {
+    if (typeof group !== "object" || group === null) continue;
+    for (const day of groups) {
+      const entries = (group as Record<string, unknown>)[day];
+      if (!Array.isArray(entries)) continue;
+      for (const e of entries) {
+        if (typeof e !== "object" || e === null) continue;
+        const rec = e as {
+          towards?: { station_code?: string | null; station_name?: string | null } | null;
+          first_train_time?: string | null;
+          last_train_time?: string | null;
+        };
+        const first = rec.first_train_time ?? null;
+        const last = rec.last_train_time ?? null;
+        if (!first && !last) continue;
+        const towardsCode = rec.towards?.station_code ?? null;
+        const key = `${day}|${towardsCode ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          dayGroup: day,
+          towardsCode,
+          towardsName: rec.towards?.station_name ?? null,
+          firstTrainTime: first,
+          lastTrainTime: last,
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /** Extract rich station metadata from the DMRC station detail payload. */

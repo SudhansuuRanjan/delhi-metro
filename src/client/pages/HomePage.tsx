@@ -9,6 +9,7 @@ import {
   Heart,
   History,
   Link2,
+  Map as MapIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -310,6 +311,14 @@ export default function HomePage() {
                 <span className="icon-badge">{favorites.length}</span>
               )}
             </button>
+            <Link
+              to="/map"
+              className="icon-btn"
+              title="Open full network map"
+              aria-label="Open full network map"
+            >
+              <MapIcon size={15} strokeWidth={2.2} />
+            </Link>
           </span>
         </div>
         <div className="metro-icon">🚇</div>

@@ -39,9 +39,13 @@ export interface StationDetail extends StationRef {
   stationType: string | null;
   interchange: boolean;
   status: string | null;
+  openingTime: string | null;
+  closingTime: string | null;
   lines: LineRef[];
   firstTrain: string | null;
   lastTrain: string | null;
+  /** Per-day first/last train per travel direction. */
+  dayTimings: DayTiming[];
   adjacent: {
     code: string;
     name: string;
@@ -50,6 +54,16 @@ export interface StationDetail extends StationRef {
     distanceKm: number;
   }[];
   facilities: StationFacilities;
+}
+
+export type DayGroup = "weekdays" | "saturday" | "sunday";
+
+export interface DayTiming {
+  dayGroup: DayGroup;
+  towardsCode: string | null;
+  towardsName: string | null;
+  firstTrainTime: string | null;
+  lastTrainTime: string | null;
 }
 
 export interface StationFacilities {
@@ -111,4 +125,25 @@ export async function fetchStatus(): Promise<{
   lines: number;
 }> {
   return getJson("/api/status");
+}
+
+export interface NetworkStation extends StationRef {
+  lat: number | null;
+  lng: number | null;
+  x: number | null;
+  y: number | null;
+  interchange: boolean;
+  /** All line codes serving this station. */
+  lines: string[];
+}
+
+export interface NetworkLine {
+  code: string;
+  name: string;
+  color: string;
+  stations: NetworkStation[];
+}
+
+export async function fetchNetwork(): Promise<{ lines: NetworkLine[] }> {
+  return getJson("/api/network");
 }

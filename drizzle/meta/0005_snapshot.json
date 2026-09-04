@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "650bfe76-0d57-40a2-9795-4b4d17cc2d8a",
-  "prevId": "e824b638-7f47-4b08-a95b-9094e62f6359",
+  "id": "4d661625-ffa7-4e94-b972-7a0e8d137972",
+  "prevId": "650bfe76-0d57-40a2-9795-4b4d17cc2d8a",
   "tables": {
     "edges": {
       "name": "edges",
@@ -215,6 +215,81 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "station_day_timings": {
+      "name": "station_day_timings",
+      "columns": {
+        "station_code": {
+          "name": "station_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "day_group": {
+          "name": "day_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "towards_code": {
+          "name": "towards_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "towards_name": {
+          "name": "towards_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "first_train_time": {
+          "name": "first_train_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_train_time": {
+          "name": "last_train_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "station_day_timings_station_code_stations_station_code_fk": {
+          "name": "station_day_timings_station_code_stations_station_code_fk",
+          "tableFrom": "station_day_timings",
+          "tableTo": "stations",
+          "columnsFrom": [
+            "station_code"
+          ],
+          "columnsTo": [
+            "station_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "station_day_timings_station_code_day_group_towards_code_pk": {
+          "columns": [
+            "station_code",
+            "day_group",
+            "towards_code"
+          ],
+          "name": "station_day_timings_station_code_day_group_towards_code_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -552,6 +627,20 @@
         },
         "status": {
           "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "opening_time": {
+          "name": "opening_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "closing_time": {
+          "name": "closing_time",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

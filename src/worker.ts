@@ -144,6 +144,18 @@ app.get("/api/station/:code", async (c) => {
     .where(eq(schema.stationTimings.stationCode, code))
     .get();
 
+  const dayTimings = await db
+    .select({
+      dayGroup: schema.stationDayTimings.dayGroup,
+      towardsCode: schema.stationDayTimings.towardsCode,
+      towardsName: schema.stationDayTimings.towardsName,
+      firstTrainTime: schema.stationDayTimings.firstTrainTime,
+      lastTrainTime: schema.stationDayTimings.lastTrainTime,
+    })
+    .from(schema.stationDayTimings)
+    .where(eq(schema.stationDayTimings.stationCode, code))
+    .all();
+
   const facilities = await db
     .select()
     .from(schema.stationFacilities)
@@ -188,9 +200,18 @@ app.get("/api/station/:code", async (c) => {
     stationType: station.stationType,
     interchange: !!station.interchange,
     status: station.status,
+    openingTime: station.openingTime,
+    closingTime: station.closingTime,
     lines: lines.map((l) => ({ code: l.code, name: l.name, color: l.color })),
     firstTrain: timing?.firstTrain ?? null,
     lastTrain: timing?.lastTrain ?? null,
+    dayTimings: dayTimings.map((t) => ({
+      dayGroup: t.dayGroup,
+      towardsCode: t.towardsCode,
+      towardsName: t.towardsName,
+      firstTrainTime: t.firstTrainTime,
+      lastTrainTime: t.lastTrainTime,
+    })),
     adjacent: adjRows.map((r) => ({
       code: r.toCode,
       name: adjName.get(r.toCode) ?? r.toCode,
@@ -208,6 +229,86 @@ app.get("/api/station/:code", async (c) => {
       parking: parseJson<{ provider: string | null; location: string | null; car: number | null; motorcycle: number | null; cycle: number | null }[]>(facilities?.parking ?? null, []),
     },
   });
+});
+
+// Full network geometry for the route map page: one ordered station list
+// per line with map coords + interchange flags, plus the line legend.
+app.get("/api/network", async (c) => {
+  const cached = await c.env.CACHE.get("cache:network");
+  if (cached) return c.json(JSON.parse(cached));
+
+  const db = createD1(c.env.DB);
+  const lineRows = await db
+    .select({
+      code: schema.lines.lineCode,
+      name: schema.lines.lineColor,
+      color: schema.lines.primaryColorCode ?? schema.lines.lineColor,
+      order: schema.lines.orderIndex,
+    })
+    .from(schema.lines)
+    .where(eq(schema.lines.showInFrontend, true))
+    .orderBy(schema.lines.orderIndex);
+
+  const stationLineRows = await db
+    .select({
+      stationCode: schema.stationLines.stationCode,
+      lineCode: schema.stationLines.lineCode,
+      order: schema.stationLines.orderIndex,
+    })
+    .from(schema.stationLines)
+    .all();
+
+  const stationRows = await db
+    .select({
+      code: schema.stations.stationCode,
+      name: schema.stations.name,
+      latitude: schema.stations.latitude,
+      longitude: schema.stations.longitude,
+      x: schema.stations.xCoords,
+      y: schema.stations.yCoords,
+      interchange: schema.stations.interchange,
+    })
+    .from(schema.stations)
+    .all();
+
+  const stationByCode = new Map(stationRows.map((s) => [s.code, s]));
+  const linesByStation = new Map<string, string[]>();
+  for (const sl of stationLineRows) {
+    const arr = linesByStation.get(sl.stationCode) ?? [];
+    arr.push(sl.lineCode);
+    linesByStation.set(sl.stationCode, arr);
+  }
+
+  const lines = lineRows.map((l) => {
+    const ordered = stationLineRows
+      .filter((sl) => sl.lineCode === l.code)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const stations = ordered
+      .map((sl) => stationByCode.get(sl.stationCode))
+      .filter((s) => s !== undefined)
+      .map((s) => ({
+        code: s.code,
+        name: s.name,
+        lat: s.latitude,
+        lng: s.longitude,
+        x: s.x,
+        y: s.y,
+        interchange: !!s.interchange,
+        lines: linesByStation.get(s.code) ?? [],
+      }));
+    return {
+      code: l.code,
+      name: l.name,
+      color: l.color ?? "#888",
+      stations,
+    };
+  });
+
+  const payload = { lines };
+  await c.env.CACHE.put("cache:network", JSON.stringify(payload), {
+    expirationTtl: 4 * 3600,
+  }).catch(() => {});
+  return c.json(payload);
 });
 
 // Route planning via the Durable Object (in-memory graph)

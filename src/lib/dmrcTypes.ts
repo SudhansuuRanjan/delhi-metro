@@ -56,6 +56,17 @@ export interface DmrcPrevNextEntry {
 export interface DmrcTrainTiming {
   first_train?: string | null;
   last_train?: string | null;
+  first_train_time?: string | null;
+  last_train_time?: string | null;
+  /** Terminal the entry's trains run towards. */
+  towards?: {
+    station_code?: string | null;
+    station_name?: string | null;
+  } | null;
+  station?: {
+    station_code?: string | null;
+    station_name?: string | null;
+  } | null;
   [key: string]: unknown;
 }
 
@@ -151,6 +162,8 @@ export interface DmrcStationDetail {
   x_coords: number | null;
   y_coords: number | null;
   status: string | null;
+  opening_time?: string | null;
+  closing_time?: string | null;
   station_status: unknown[];
   metro_lines: DmrcLine[];
   prev_next_stations: Record<string, DmrcPrevNextEntry[]>[];

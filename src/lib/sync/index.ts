@@ -128,6 +128,7 @@ export async function runSync(env: Env): Promise<SyncResult> {
 
 async function clearTables(env: Env): Promise<void> {
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM station_day_timings"),
     env.DB.prepare("DELETE FROM station_facilities"),
     env.DB.prepare("DELETE FROM station_platforms"),
     env.DB.prepare("DELETE FROM station_lines"),
@@ -186,6 +187,8 @@ async function insertCatalog(
           stationType: s.stationType,
           interchange: s.interchange,
           status: s.status,
+          openingTime: s.openingTime,
+          closingTime: s.closingTime,
         }))
       )
       .onConflictDoNothing();
@@ -216,6 +219,25 @@ async function insertCatalog(
     await db
       .insert(schema.stationTimings)
       .values(timingsValues.slice(i, i + timingChunk))
+      .onConflictDoNothing();
+  }
+
+  // Per-day directional timings (7 cols; keep batches under the 100-var cap).
+  const dayTimingValues = catalog.stations.flatMap((s) =>
+    s.dayTimings.map((t) => ({
+      stationCode: s.stationCode,
+      dayGroup: t.dayGroup,
+      towardsCode: t.towardsCode,
+      towardsName: t.towardsName,
+      firstTrainTime: t.firstTrainTime,
+      lastTrainTime: t.lastTrainTime,
+    }))
+  );
+  const dayTimingChunk = 14;
+  for (let i = 0; i < dayTimingValues.length; i += dayTimingChunk) {
+    await db
+      .insert(schema.stationDayTimings)
+      .values(dayTimingValues.slice(i, i + dayTimingChunk))
       .onConflictDoNothing();
   }
 

@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router-dom";
+import { useState } from "react";
 import {
   Accessibility,
   ArrowLeft,
@@ -24,6 +25,13 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useStation } from "../hooks";
+import type { DayGroup } from "../api";
+
+const DAY_GROUPS: { key: DayGroup; label: string }[] = [
+  { key: "weekdays", label: "Mon–Fri" },
+  { key: "saturday", label: "Saturday" },
+  { key: "sunday", label: "Sunday" },
+];
 
 /** Map DMRC amenity names to Lucide icons. */
 const AMENITY_ICONS: Array<{ match: string; Icon: LucideIcon }> = [
@@ -67,6 +75,20 @@ function countText(count: number, singular: string, plural?: string): string {
 export default function StationPage() {
   const { code = "" } = useParams();
   const { data: station, isLoading, isError } = useStation(code);
+  const [activeDay, setActiveDay] = useState<DayGroup>("weekdays");
+
+  const dayTimings = station?.dayTimings ?? [];
+  const activeTimings = dayTimings.filter((t) => t.dayGroup === activeDay);
+  const daysWithData = DAY_GROUPS.filter((d) =>
+    dayTimings.some((t) => t.dayGroup === d.key),
+  );
+  const showDayTabs = daysWithData.length > 0;
+  const hasHours =
+    station?.openingTime ||
+    station?.closingTime ||
+    station?.firstTrain ||
+    station?.lastTrain ||
+    showDayTabs;
 
   return (
     <div className="max-w-4xl mx-auto px-4 pb-16">
@@ -142,16 +164,135 @@ export default function StationPage() {
           </div>
 
           {/* Timings */}
-          {(station.firstTrain || station.lastTrain) && (
+          {hasHours && (
             <div className="glass-card p-6 fade-in">
               <h3 className="station-card-title">
                 <Clock size={14} strokeWidth={2.2} />
                 First / Last Train
               </h3>
-              <div className="flex gap-6 text-sm">
-                <span className="text-slate-300">First: <span className="text-emerald-400 font-semibold">{station.firstTrain}</span></span>
-                <span className="text-slate-300">Last: <span className="text-rose-400 font-semibold">{station.lastTrain}</span></span>
-              </div>
+              {(station.openingTime || station.closingTime) && (
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
+                  {station.openingTime && (
+                    <span className="text-slate-300">
+                      Opens:{" "}
+                      <span className="text-emerald-400 font-semibold">
+                        {station.openingTime.slice(0, 5)}
+                      </span>
+                    </span>
+                  )}
+                  {station.closingTime && (
+                    <span className="text-slate-300">
+                      Closes:{" "}
+                      <span className="text-rose-400 font-semibold">
+                        {station.closingTime.slice(0, 5)}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
+              {!showDayTabs && (station.firstTrain || station.lastTrain) && (
+                <div className="flex gap-6 text-sm">
+                  {station.firstTrain && (
+                    <span className="text-slate-300">
+                      First:{" "}
+                      <span className="text-emerald-400 font-semibold">
+                        {station.firstTrain}
+                      </span>
+                    </span>
+                  )}
+                  {station.lastTrain && (
+                    <span className="text-slate-300">
+                      Last:{" "}
+                      <span className="text-rose-400 font-semibold">
+                        {station.lastTrain}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
+              {showDayTabs && (
+                <div>
+                  <div className="day-tabs" role="tablist" aria-label="Day of week">
+                    {DAY_GROUPS.map((d) => {
+                      const hasData = dayTimings.some(
+                        (t) => t.dayGroup === d.key,
+                      );
+                      return (
+                        <button
+                          key={d.key}
+                          type="button"
+                          role="tab"
+                          aria-selected={activeDay === d.key}
+                          disabled={!hasData}
+                          onClick={() => setActiveDay(d.key)}
+                          className={`day-tab ${activeDay === d.key ? "active" : ""}`}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {activeTimings.length === 0 ? (
+                    <p className="text-slate-500 text-sm">
+                      No timing data for{" "}
+                      {DAY_GROUPS.find((d) => d.key === activeDay)?.label}.
+                      {daysWithData.length > 0 && (
+                        <>
+                          {" "}Available for{" "}
+                          {daysWithData.map((d) => d.label).join(", ")}.
+                        </>
+                      )}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {activeTimings.map((t, i) => (
+                        <div
+                          key={`${t.towardsCode ?? i}`}
+                          className="day-timing-row"
+                        >
+                          <span className="day-timing-towards">
+                            <TrainFront
+                              size={14}
+                              strokeWidth={2.2}
+                              className="shrink-0 text-slate-500"
+                            />
+                            <span className="truncate">
+                              Towards{" "}
+                              {t.towardsCode && station.adjacent.some(
+                                (a) => a.code === t.towardsCode,
+                              ) ? (
+                                <Link
+                                  to={`/station/${t.towardsCode}`}
+                                  className="text-emerald-400 hover:text-emerald-300"
+                                >
+                                  {t.towardsName ?? t.towardsCode}
+                                </Link>
+                              ) : (
+                                (t.towardsName ?? t.towardsCode ?? "—")
+                              )}
+                            </span>
+                          </span>
+                          <span className="day-timing-times">
+                            {t.firstTrainTime && (
+                              <span className="text-emerald-400 font-semibold">
+                                {t.firstTrainTime}
+                              </span>
+                            )}
+                            {t.firstTrainTime && t.lastTrainTime && (
+                              <span className="text-slate-600">·</span>
+                            )}
+                            {t.lastTrainTime && (
+                              <span className="text-rose-400 font-semibold">
+                                {t.lastTrainTime}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
