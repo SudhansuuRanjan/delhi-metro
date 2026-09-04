@@ -9,12 +9,12 @@ crons = ["0 */4 * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "delhi-metro-db"
-database_id = "local"
+database_id = "b3983015-0a87-4a9a-9101-daf94e434b09"
 migrations_dir = "drizzle"
 
 [[kv_namespaces]]
 binding = "CACHE"
-id = "local"
+id = "01c2365f1a974574bcb34d964080a376"
 
 [[durable_objects.bindings]]
 name = "GRAPH"
