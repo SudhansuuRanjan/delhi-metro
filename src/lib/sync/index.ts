@@ -5,7 +5,7 @@ import { calibrateFares, DEFAULT_BRACKETS, type FareBracket } from "./fares";
 import { fetchDmrc } from "../dmrc";
 import type { DmrcFareRoute } from "../dmrcTypes";
 import { haversineKm, parseDmrcTime } from "../geo";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export const SYNC_LOCK_KEY = "sync:lock";
 export const SYNC_LOCK_TTL = 25 * 60; // seconds
@@ -94,6 +94,10 @@ export async function runSync(
     if (catalog.lines.length === 0 || catalog.stations.length === 0) {
       return { startedAt, finishedAt: Date.now(), lines: 0, stations: 0, edges: 0, fareBrackets: 0, status: "empty" };
     }
+    const detailHits = catalog.stations.filter((s) => s.hasDetail).length;
+    console.log(
+      `catalog: ${catalog.lines.length} lines, ${catalog.stations.length} stations, detail payloads for ${detailHits}`,
+    );
 
     // 3. Derive real edge weights from route samples
     const samplePairs = buildSamplePairs(catalog);
@@ -108,9 +112,9 @@ export async function runSync(
         : DEFAULT_BRACKETS;
     }
 
-    // 5. Write D1 (clear + insert for idempotency)
-    await clearTables(env);
-    await insertCatalog(env, catalog, brackets);
+    // 5. Write D1: merge station details (preserve good rows when DMRC
+    // omits a detail payload this run) instead of blind clear + insert.
+    await upsertCatalog(env, catalog, brackets);
 
     // 6. Publish in-memory graph to the Durable Object
     await publishGraph(env, catalog, brackets);
@@ -170,32 +174,169 @@ export async function runSync(
   }
 }
 
-async function clearTables(env: Env): Promise<void> {
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM station_day_timings"),
-    env.DB.prepare("DELETE FROM station_facilities"),
-    env.DB.prepare("DELETE FROM station_platforms"),
-    env.DB.prepare("DELETE FROM station_lines"),
-    env.DB.prepare("DELETE FROM station_timings"),
-    env.DB.prepare("DELETE FROM edges"),
-    env.DB.prepare("DELETE FROM stations"),
-    env.DB.prepare("DELETE FROM lines"),
-    env.DB.prepare("DELETE FROM fare_brackets"),
-  ]);
-}
-
-async function insertCatalog(
+/**
+ * Merge-write the catalog: lines/edges/brackets are rebuilt wholesale (cheap,
+ * always complete), but per-station detail rows are only overwritten when this
+ * run actually fetched a detail payload for that station. DMRC intermittently
+ * 522s/omits individual station payloads, and a blind clear + insert would
+ * wipe good stored data with NULLs.
+ */
+async function upsertCatalog(
   env: Env,
   catalog: SyncCatalog,
   brackets: FareBracket[]
 ): Promise<void> {
   const db = createD1(env.DB);
-  // D1 SQLite has a 100-variable limit per statement. Each row uses its column
-  // count of variables, so keep batches well under that.
-  const stationChunk = 8; // 10 cols
+
+  // Structural tables: full rebuild (same as before).
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM station_lines"),
+    env.DB.prepare("DELETE FROM edges"),
+    env.DB.prepare("DELETE FROM lines"),
+    env.DB.prepare("DELETE FROM fare_brackets"),
+  ]);
+  await insertStructural(env, catalog, brackets);
+
+  // Per-station detail tables: upsert only stations with fresh payloads.
+  const fresh = catalog.stations.filter((s) => s.hasDetail);
+  if (fresh.length === 0) {
+    console.log("upsertCatalog: no fresh detail payloads, keeping stored station details");
+    return;
+  }
+  console.log(`upsertCatalog: merging fresh details for ${fresh.length}/${catalog.stations.length} stations`);
+
+  const stationChunk = 8; // 12 cols
+  for (let i = 0; i < fresh.length; i += stationChunk) {
+    const slice = fresh.slice(i, i + stationChunk);
+    await db
+      .insert(schema.stations)
+      .values(
+        slice.map((s) => ({
+          stationCode: s.stationCode,
+          name: s.name,
+          commercialName: s.commercialName,
+          latitude: s.latitude,
+          longitude: s.longitude,
+          xCoords: s.xCoords,
+          yCoords: s.yCoords,
+          stationType: s.stationType,
+          interchange: s.interchange,
+          status: s.status,
+          openingTime: s.openingTime,
+          closingTime: s.closingTime,
+        }))
+      )
+      .onConflictDoUpdate({
+        target: schema.stations.stationCode,
+        set: {
+          name: sql`excluded.name`,
+          commercialName: sql`excluded.commercial_name`,
+          latitude: sql`excluded.latitude`,
+          longitude: sql`excluded.longitude`,
+          xCoords: sql`excluded.x_coords`,
+          yCoords: sql`excluded.y_coords`,
+          stationType: sql`excluded.station_type`,
+          interchange: sql`excluded.interchange`,
+          status: sql`excluded.status`,
+          openingTime: sql`excluded.opening_time`,
+          closingTime: sql`excluded.closing_time`,
+        },
+      });
+  }
+
+  // Timings/facilities/platforms/day-timings: delete + reinsert per fresh station.
+  const freshCodes = fresh.map((s) => s.stationCode);
+  for (let i = 0; i < freshCodes.length; i += 40) {
+    const chunk = freshCodes.slice(i, i + 40);
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM station_timings WHERE station_code IN (${chunk.map(() => "?").join(",")})`).bind(...chunk),
+      env.DB.prepare(`DELETE FROM station_day_timings WHERE station_code IN (${chunk.map(() => "?").join(",")})`).bind(...chunk),
+      env.DB.prepare(`DELETE FROM station_facilities WHERE station_code IN (${chunk.map(() => "?").join(",")})`).bind(...chunk),
+      env.DB.prepare(`DELETE FROM station_platforms WHERE station_code IN (${chunk.map(() => "?").join(",")})`).bind(...chunk),
+    ]);
+  }
+
+  const timingChunk = 30; // 3 cols
+  const timingsValues = fresh
+    .filter((s) => s.firstTrain || s.lastTrain)
+    .map((s) => ({
+      stationCode: s.stationCode,
+      firstTrain: s.firstTrain,
+      lastTrain: s.lastTrain,
+    }));
+  for (let i = 0; i < timingsValues.length; i += timingChunk) {
+    await db
+      .insert(schema.stationTimings)
+      .values(timingsValues.slice(i, i + timingChunk))
+      .onConflictDoNothing();
+  }
+
+  const dayTimingValues = fresh.flatMap((s) =>
+    s.dayTimings.map((t) => ({
+      stationCode: s.stationCode,
+      dayGroup: t.dayGroup,
+      towardsCode: t.towardsCode,
+      towardsName: t.towardsName,
+      firstTrainTime: t.firstTrainTime,
+      lastTrainTime: t.lastTrainTime,
+    }))
+  );
+  const dayTimingChunk = 14;
+  for (let i = 0; i < dayTimingValues.length; i += dayTimingChunk) {
+    await db
+      .insert(schema.stationDayTimings)
+      .values(dayTimingValues.slice(i, i + dayTimingChunk))
+      .onConflictDoNothing();
+  }
+
+  const freshPlatforms = catalog.platforms.filter((p) =>
+    freshCodes.includes(p.stationCode)
+  );
+  const platformChunk = 24; // 4 cols
+  for (let i = 0; i < freshPlatforms.length; i += platformChunk) {
+    await db
+      .insert(schema.stationPlatforms)
+      .values(
+        freshPlatforms.slice(i, i + platformChunk).map((p) => ({
+          stationCode: p.stationCode,
+          lineCode: p.lineCode,
+          direction: p.direction,
+          platformNo: p.platformNo,
+        }))
+      )
+      .onConflictDoNothing();
+  }
+
+  const facilityChunk = 12;
+  for (let i = 0; i < fresh.length; i += facilityChunk) {
+    const slice = fresh.slice(i, i + facilityChunk);
+    await db
+      .insert(schema.stationFacilities)
+      .values(
+        slice.map((s) => ({
+          stationCode: s.stationCode,
+          description: s.facilities.description,
+          mobile: s.facilities.mobile,
+          landline: s.facilities.landline,
+          amenities: JSON.stringify(s.facilities.amenities),
+          gates: JSON.stringify(s.facilities.gates),
+          lifts: JSON.stringify(s.facilities.lifts),
+          parking: JSON.stringify(s.facilities.parking),
+        }))
+      )
+      .onConflictDoNothing();
+  }
+}
+
+/** Wholesale rebuild of lines/edges/station_lines/fares (always complete). */
+async function insertStructural(
+  env: Env,
+  catalog: SyncCatalog,
+  brackets: FareBracket[]
+): Promise<void> {
+  const db = createD1(env.DB);
   const edgeChunk = 15; // 6 cols
   const pairChunk = 25; // 4 cols
-  const timingChunk = 30; // 3 cols
 
   for (const line of catalog.lines) {
     await db
@@ -215,6 +356,9 @@ async function insertCatalog(
       .onConflictDoNothing();
   }
 
+  // Ensure every catalog station has at least a base row (preserves stored
+  // detail columns for stations without a fresh payload this run).
+  const stationChunk = 8;
   for (let i = 0; i < catalog.stations.length; i += stationChunk) {
     const slice = catalog.stations.slice(i, i + stationChunk);
     await db
@@ -249,75 +393,6 @@ async function insertCatalog(
     await db
       .insert(schema.stationLines)
       .values(stationLineValues.slice(i, i + pairChunk))
-      .onConflictDoNothing();
-  }
-
-  const timingsValues = catalog.stations
-    .filter((s) => s.firstTrain || s.lastTrain)
-    .map((s) => ({
-      stationCode: s.stationCode,
-      firstTrain: s.firstTrain,
-      lastTrain: s.lastTrain,
-    }));
-  for (let i = 0; i < timingsValues.length; i += timingChunk) {
-    await db
-      .insert(schema.stationTimings)
-      .values(timingsValues.slice(i, i + timingChunk))
-      .onConflictDoNothing();
-  }
-
-  // Per-day directional timings (7 cols; keep batches under the 100-var cap).
-  const dayTimingValues = catalog.stations.flatMap((s) =>
-    s.dayTimings.map((t) => ({
-      stationCode: s.stationCode,
-      dayGroup: t.dayGroup,
-      towardsCode: t.towardsCode,
-      towardsName: t.towardsName,
-      firstTrainTime: t.firstTrainTime,
-      lastTrainTime: t.lastTrainTime,
-    }))
-  );
-  const dayTimingChunk = 14;
-  for (let i = 0; i < dayTimingValues.length; i += dayTimingChunk) {
-    await db
-      .insert(schema.stationDayTimings)
-      .values(dayTimingValues.slice(i, i + dayTimingChunk))
-      .onConflictDoNothing();
-  }
-
-  const platformChunk = 24; // 4 cols (4 * 24 = 96 <= 100 var limit)
-  for (let i = 0; i < catalog.platforms.length; i += platformChunk) {
-    await db
-      .insert(schema.stationPlatforms)
-      .values(
-        catalog.platforms.slice(i, i + platformChunk).map((p) => ({
-          stationCode: p.stationCode,
-          lineCode: p.lineCode,
-          direction: p.direction,
-          platformNo: p.platformNo,
-        }))
-      )
-      .onConflictDoNothing();
-  }
-
-  // Station facilities (one row per station; 8 cols each).
-  const facilityChunk = 12;
-  for (let i = 0; i < catalog.stations.length; i += facilityChunk) {
-    const slice = catalog.stations.slice(i, i + facilityChunk);
-    await db
-      .insert(schema.stationFacilities)
-      .values(
-        slice.map((s) => ({
-          stationCode: s.stationCode,
-          description: s.facilities.description,
-          mobile: s.facilities.mobile,
-          landline: s.facilities.landline,
-          amenities: JSON.stringify(s.facilities.amenities),
-          gates: JSON.stringify(s.facilities.gates),
-          lifts: JSON.stringify(s.facilities.lifts),
-          parking: JSON.stringify(s.facilities.parking),
-        }))
-      )
       .onConflictDoNothing();
   }
 

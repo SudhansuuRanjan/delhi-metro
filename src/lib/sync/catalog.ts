@@ -27,6 +27,8 @@ export interface SyncStation {
   dayTimings: SyncDayTiming[];
   /** Rich metadata from the station detail endpoint. */
   facilities: SyncStationFacilities;
+  /** True when the detail endpoint returned a payload for this station. */
+  hasDetail: boolean;
 }
 
 /** One per-day first/last train entry pointing at a travel direction. */
@@ -264,6 +266,7 @@ export async function fetchCatalog(): Promise<SyncCatalog> {
       lastTrain: (lastTrain as { last_train?: string } | undefined)?.last_train ?? null,
       dayTimings,
       facilities: extractFacilities(d),
+      hasDetail: !!d,
     };
   });
 
