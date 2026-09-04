@@ -11,6 +11,7 @@ binding = "DB"
 database_name = "delhi-metro-db"
 database_id = "b3983015-0a87-4a9a-9101-daf94e434b09"
 migrations_dir = "drizzle"
+preview_database_id = "local"
 
 [[kv_namespaces]]
 binding = "CACHE"
