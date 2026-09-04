@@ -1,0 +1,529 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "e824b638-7f47-4b08-a95b-9094e62f6359",
+  "prevId": "18048011-3949-40f1-a628-f4691f192170",
+  "tables": {
+    "edges": {
+      "name": "edges",
+      "columns": {
+        "from_code": {
+          "name": "from_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "to_code": {
+          "name": "to_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_code": {
+          "name": "line_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "time_min": {
+          "name": "time_min",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "distance_km": {
+          "name": "distance_km",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "direction": {
+          "name": "direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'down'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "edges_from_code_stations_station_code_fk": {
+          "name": "edges_from_code_stations_station_code_fk",
+          "tableFrom": "edges",
+          "tableTo": "stations",
+          "columnsFrom": [
+            "from_code"
+          ],
+          "columnsTo": [
+            "station_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "edges_to_code_stations_station_code_fk": {
+          "name": "edges_to_code_stations_station_code_fk",
+          "tableFrom": "edges",
+          "tableTo": "stations",
+          "columnsFrom": [
+            "to_code"
+          ],
+          "columnsTo": [
+            "station_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "edges_line_code_lines_line_code_fk": {
+          "name": "edges_line_code_lines_line_code_fk",
+          "tableFrom": "edges",
+          "tableTo": "lines",
+          "columnsFrom": [
+            "line_code"
+          ],
+          "columnsTo": [
+            "line_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "edges_from_code_to_code_line_code_pk": {
+          "columns": [
+            "from_code",
+            "to_code",
+            "line_code"
+          ],
+          "name": "edges_from_code_to_code_line_code_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "fare_brackets": {
+      "name": "fare_brackets",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "max_distance_km": {
+          "name": "max_distance_km",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fare": {
+          "name": "fare",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "lines": {
+      "name": "lines",
+      "columns": {
+        "line_code": {
+          "name": "line_code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_color": {
+          "name": "line_color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "primary_color_code": {
+          "name": "primary_color_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "secondary_color_code": {
+          "name": "secondary_color_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "start_station": {
+          "name": "start_station",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "end_station": {
+          "name": "end_station",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "show_in_frontend": {
+          "name": "show_in_frontend",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "order_index": {
+          "name": "order_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "station_lines": {
+      "name": "station_lines",
+      "columns": {
+        "station_code": {
+          "name": "station_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_code": {
+          "name": "line_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "order_index": {
+          "name": "order_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "station_lines_station_code_stations_station_code_fk": {
+          "name": "station_lines_station_code_stations_station_code_fk",
+          "tableFrom": "station_lines",
+          "tableTo": "stations",
+          "columnsFrom": [
+            "station_code"
+          ],
+          "columnsTo": [
+            "station_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "station_lines_line_code_lines_line_code_fk": {
+          "name": "station_lines_line_code_lines_line_code_fk",
+          "tableFrom": "station_lines",
+          "tableTo": "lines",
+          "columnsFrom": [
+            "line_code"
+          ],
+          "columnsTo": [
+            "line_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "station_lines_station_code_line_code_pk": {
+          "columns": [
+            "station_code",
+            "line_code"
+          ],
+          "name": "station_lines_station_code_line_code_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "station_platforms": {
+      "name": "station_platforms",
+      "columns": {
+        "station_code": {
+          "name": "station_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_code": {
+          "name": "line_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "direction": {
+          "name": "direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "platform_no": {
+          "name": "platform_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "station_platforms_station_code_stations_station_code_fk": {
+          "name": "station_platforms_station_code_stations_station_code_fk",
+          "tableFrom": "station_platforms",
+          "tableTo": "stations",
+          "columnsFrom": [
+            "station_code"
+          ],
+          "columnsTo": [
+            "station_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "station_platforms_line_code_lines_line_code_fk": {
+          "name": "station_platforms_line_code_lines_line_code_fk",
+          "tableFrom": "station_platforms",
+          "tableTo": "lines",
+          "columnsFrom": [
+            "line_code"
+          ],
+          "columnsTo": [
+            "line_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "station_platforms_station_code_line_code_direction_pk": {
+          "columns": [
+            "station_code",
+            "line_code",
+            "direction"
+          ],
+          "name": "station_platforms_station_code_line_code_direction_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "station_timings": {
+      "name": "station_timings",
+      "columns": {
+        "station_code": {
+          "name": "station_code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "first_train": {
+          "name": "first_train",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_train": {
+          "name": "last_train",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "station_timings_station_code_stations_station_code_fk": {
+          "name": "station_timings_station_code_stations_station_code_fk",
+          "tableFrom": "station_timings",
+          "tableTo": "stations",
+          "columnsFrom": [
+            "station_code"
+          ],
+          "columnsTo": [
+            "station_code"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "stations": {
+      "name": "stations",
+      "columns": {
+        "station_code": {
+          "name": "station_code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "commercial_name": {
+          "name": "commercial_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "x_coords": {
+          "name": "x_coords",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "y_coords": {
+          "name": "y_coords",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "station_type": {
+          "name": "station_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "interchange": {
+          "name": "interchange",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "sync_meta": {
+      "name": "sync_meta",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

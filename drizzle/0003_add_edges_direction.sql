@@ -1,0 +1,1 @@
+ALTER TABLE `edges` ADD `direction` text DEFAULT 'down' NOT NULL;
