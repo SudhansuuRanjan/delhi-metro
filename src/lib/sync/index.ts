@@ -9,6 +9,10 @@ import { eq } from "drizzle-orm";
 
 export const SYNC_LOCK_KEY = "sync:lock";
 export const SYNC_LOCK_TTL = 25 * 60; // seconds
+/** Minimum gap between successful syncs. Cron, manual triggers and
+ *  deploy hooks all funnel through runSync, so this single check caps the
+ *  global sync rate no matter how many triggers fire. */
+export const SYNC_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 const ROUTE_SAMPLE_MAX = 20;
 
 export interface SyncResult {
@@ -18,31 +22,64 @@ export interface SyncResult {
   stations: number;
   edges: number;
   fareBrackets: number;
-  status: "success" | "partial" | "empty";
+  status: "success" | "partial" | "empty" | "skipped";
 }
 
 /**
  * Run a full sync: fetch catalog, derive edge weights, calibrate fares,
  * write D1, publish the in-memory graph to the Durable Object, warm KV.
+ *
+ * Single-flight + rate-limited: at most one run at a time (KV lock with
+ * stale-lock expiry) and at most one successful run per SYNC_COOLDOWN_MS
+ * unless { force: true } is passed (manual escape hatch).
  */
-export async function runSync(env: Env): Promise<SyncResult> {
+export async function runSync(
+  env: Env,
+  opts?: { force?: boolean },
+): Promise<SyncResult> {
   const startedAt = Date.now();
   const db = createD1(env.DB);
 
-  // 1. Acquire lock (KV) with stale-lock handling
+  // 0. Cooldown: skip if a sync completed recently (prevents cron/manual/
+  // deploy triggers from stacking or looping).
+  if (!opts?.force) {
+    const last = await db
+      .select()
+      .from(schema.syncMeta)
+      .where(eq(schema.syncMeta.key, "lastSync"))
+      .get();
+    const lastSync = Number(last?.value ?? 0);
+    if (lastSync > 0 && startedAt - lastSync < SYNC_COOLDOWN_MS) {
+      return {
+        startedAt,
+        finishedAt: startedAt,
+        lines: 0,
+        stations: 0,
+        edges: 0,
+        fareBrackets: 0,
+        status: "skipped",
+      };
+    }
+  }
+
+  // 1. Acquire lock (KV) with stale-lock handling. The lock value is the
+  // run's start timestamp so a crashed run can be identified and reclaimed
+  // (a bare "1" can never expire on its own if the finally block fails).
+  const lockVal = String(startedAt);
   const existing = await env.CACHE.get(SYNC_LOCK_KEY);
-  if (existing === "1") {
+  if (existing) {
     const runningRow = await db
       .select()
       .from(schema.syncMeta)
       .where(eq(schema.syncMeta.key, "syncRunning"))
       .get();
-    const runningSince = Number(runningRow?.value ?? 0);
+    const runningSince = Number(runningRow?.value ?? existing);
     if (runningSince > 0 && Date.now() - runningSince < 30 * 60 * 1000) {
       throw new Error("Sync already running");
     }
+    // Stale lock: previous run died without cleanup; reclaim it.
   }
-  await env.CACHE.put(SYNC_LOCK_KEY, "1", { expirationTtl: SYNC_LOCK_TTL });
+  await env.CACHE.put(SYNC_LOCK_KEY, lockVal, { expirationTtl: SYNC_LOCK_TTL });
   await db
     .insert(schema.syncMeta)
     .values({ key: "syncRunning", value: String(startedAt), updatedAt: startedAt })
@@ -118,7 +155,14 @@ export async function runSync(env: Env): Promise<SyncResult> {
     console.error("sync failed", err);
     throw err;
   } finally {
-    await env.CACHE.delete(SYNC_LOCK_KEY).catch(() => {});
+    // Only release the lock if we still hold it (another run may have
+    // reclaimed a stale lock while we were working).
+    try {
+      const current = await env.CACHE.get(SYNC_LOCK_KEY);
+      if (current === lockVal) await env.CACHE.delete(SYNC_LOCK_KEY);
+    } catch {
+      // ignore
+    }
     await db
       .delete(schema.syncMeta)
       .where(eq(schema.syncMeta.key, "syncRunning"))

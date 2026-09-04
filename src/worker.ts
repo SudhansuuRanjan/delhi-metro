@@ -347,24 +347,40 @@ app.get("/api/status", async (c) => {
     .select({ lines: schema.lines.lineCode })
     .from(schema.lines)
     .all();
-  return c.json({
+  const stationCount = await db
+    .select({ code: schema.stations.stationCode })
+    .from(schema.stations)
+    .all();
+  const edgeCount = await db
+    .select({ from: schema.edges.fromCode })
+    .from(schema.edges)
+    .all();
+  const payload = {
     lastSync: Number(lastSync?.value ?? 0),
-    stations: 0,
-    edges: 0,
+    stations: stationCount.length,
+    edges: edgeCount.length,
     lines: counts.length,
-  });
+  };
+  // Cache the fallback too so a cold start doesn't hammer D1 (short TTL so
+  // a fresh sync is picked up quickly).
+  await c.env.CACHE.put("cache:lastSync", JSON.stringify(payload), {
+    expirationTtl: 300,
+  }).catch(() => {});
+  return c.json(payload);
 });
 
 /* ---------- Internal ---------- */
 
-// Manual sync trigger (guarded by CRON_SECRET)
+// Manual sync trigger (guarded by CRON_SECRET). Supports ?force=1 to bypass
+// the 2h cooldown (e.g. first deploy, data repair).
 app.post("/api/internal/sync", async (c) => {
   const secret = c.req.header("x-cron-secret");
   if (!c.env.CRON_SECRET || secret !== c.env.CRON_SECRET) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  const force = c.req.query("force") === "1";
   try {
-    const result = await runSync(c.env);
+    const result = await runSync(c.env, { force });
     return c.json(result);
   } catch (err) {
     console.error(err);
