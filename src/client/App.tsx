@@ -3,10 +3,12 @@ import HomePage from "./pages/HomePage";
 import LinePage from "./pages/LinePage";
 import StationPage from "./pages/StationPage";
 import NetworkMapPage from "./pages/NetworkMapPage";
+import WebMCPTools from "./webmcp";
 
 export default function App() {
   return (
     <main className="min-h-screen text-white relative z-10">
+      <WebMCPTools />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/map" element={<NetworkMapPage />} />
