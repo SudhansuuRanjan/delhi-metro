@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import type { WebMCP } from "webmcp-types";
 import {
   fetchLines,
   fetchLineStations,
@@ -10,21 +11,6 @@ import {
   searchStations,
   type RoutePreference,
 } from "./api";
-
-declare global {
-  interface WebMCPToolDefinition {
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-    execute: (args: Record<string, unknown>) => unknown | Promise<unknown>;
-  }
-  interface Navigator {
-    modelContext?: {
-      registerTool: (tool: WebMCPToolDefinition) => void;
-      unregisterTool: (name: string) => void;
-    };
-  }
-}
 
 const PREF_VALUES = ["time", "distance", "stations", "fare", "transfers"] as const;
 
@@ -64,46 +50,62 @@ export default function WebMCPTools() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const mc = navigator.modelContext;
+    const mc = document.modelContext;
     if (!mc) return;
-    const names: string[] = [];
-    const register = (tool: WebMCPToolDefinition) => {
+    const controllers: AbortController[] = [];
+    const register = (
+      tool: WebMCP.ModelContextTool,
+      annotations?: WebMCP.ToolAnnotations,
+    ) => {
       try {
-        mc.registerTool(tool);
-        names.push(tool.name);
+        const controller = new AbortController();
+        const p = mc.registerTool(
+          annotations ? { ...tool, annotations } : tool,
+          { signal: controller.signal },
+        );
+        if (p && typeof (p as Promise<void>).catch === "function") {
+          (p as Promise<void>).catch(() => {});
+        }
+        controllers.push(controller);
       } catch {
         // WebMCP is progressive enhancement; never break the app.
       }
     };
 
-    register({
-      name: "search_stations",
-      description:
-        "Search Delhi Metro stations by name. Use to find a station code before planning a route or opening station details.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Full or partial station name, e.g. 'Rajiv Chowk' or 'Huda'.",
+    register(
+      {
+        name: "search_stations",
+        description:
+          "Search Delhi Metro stations by name. Use to find a station code before planning a route or opening station details.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Full or partial station name, e.g. 'Rajiv Chowk' or 'Huda'.",
+            },
           },
+          required: ["query"],
         },
-        required: ["query"],
+        execute: async (args) => {
+          const query = str(args.query);
+          if (!query) return err("Provide a station name query.");
+          const results = await searchStations(query);
+          return ok({ stations: results.slice(0, 25) });
+        },
       },
-      execute: async (args) => {
-        const query = str(args.query);
-        if (!query) return err("Provide a station name query.");
-        const results = await searchStations(query);
-        return ok({ stations: results.slice(0, 25) });
-      },
-    });
+      { readOnlyHint: true },
+    );
 
-    register({
-      name: "list_metro_lines",
-      description: "List all Delhi Metro lines with their codes, names and colors.",
-      inputSchema: { type: "object", properties: {} },
-      execute: async () => ok({ lines: await fetchLines() }),
-    });
+    register(
+      {
+        name: "list_metro_lines",
+        description: "List all Delhi Metro lines with their codes, names and colors.",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ok({ lines: await fetchLines() }),
+      },
+      { readOnlyHint: true },
+    );
 
     register({
       name: "plan_metro_route",
@@ -151,105 +153,117 @@ export default function WebMCPTools() {
       },
     });
 
-    register({
-      name: "get_station_details",
-      description:
-        "Get full details for a Delhi Metro station: lines, first/last train timings (weekday/Saturday/Sunday), gates, lifts, parking, amenities, contacts and nearby stations. Opens the station page in the UI.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          station: {
-            type: "string",
-            description: "Station code or name, e.g. 'HCC' or 'Hindon River'.",
+    register(
+      {
+        name: "get_station_details",
+        description:
+          "Get full details for a Delhi Metro station: lines, first/last train timings (weekday/Saturday/Sunday), gates, lifts, parking, amenities, contacts and nearby stations. Opens the station page in the UI.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            station: {
+              type: "string",
+              description: "Station code or name, e.g. 'HCC' or 'Hindon River'.",
+            },
           },
+          required: ["station"],
         },
-        required: ["station"],
+        execute: async (args) => {
+          try {
+            const resolved = await resolveStationCode(str(args.station));
+            if (!resolved) return err(`Station "${str(args.station)}" not found. Use search_stations to find it.`);
+            const detail = await fetchStation(resolved.code);
+            navigate(`/station/${encodeURIComponent(resolved.code)}`);
+            return ok(detail);
+          } catch (e) {
+            return err(e instanceof Error ? e.message : "Failed to load station.");
+          }
+        },
       },
-      execute: async (args) => {
-        try {
-          const resolved = await resolveStationCode(str(args.station));
-          if (!resolved) return err(`Station "${str(args.station)}" not found. Use search_stations to find it.`);
-          const detail = await fetchStation(resolved.code);
-          navigate(`/station/${encodeURIComponent(resolved.code)}`);
-          return ok(detail);
-        } catch (e) {
-          return err(e instanceof Error ? e.message : "Failed to load station.");
-        }
-      },
-    });
+      { readOnlyHint: true },
+    );
 
-    register({
-      name: "get_line_stations",
-      description:
-        "List all stations on a Delhi Metro line in order, flagging interchanges. Opens the line page in the UI.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          line: {
-            type: "string",
-            description: "Line code or name, e.g. 'YL' or 'Yellow Line'.",
+    register(
+      {
+        name: "get_line_stations",
+        description:
+          "List all stations on a Delhi Metro line in order, flagging interchanges. Opens the line page in the UI.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            line: {
+              type: "string",
+              description: "Line code or name, e.g. 'YL' or 'Yellow Line'.",
+            },
           },
+          required: ["line"],
         },
-        required: ["line"],
+        execute: async (args) => {
+          const q = str(args.line);
+          if (!q) return err("Provide a line code or name.");
+          const lines = await fetchLines();
+          const upper = q.toUpperCase();
+          const match =
+            lines.find((l) => l.code.toUpperCase() === upper) ??
+            lines.find((l) => l.name.toLowerCase() === q.toLowerCase()) ??
+            lines.find((l) => l.name.toLowerCase().includes(q.toLowerCase()));
+          if (!match) return err(`Line "${q}" not found. Use list_metro_lines to see valid lines.`);
+          const stations = await fetchLineStations(match.code);
+          navigate(`/line/${encodeURIComponent(match.code)}`);
+          return ok({ line: match, stations });
+        },
       },
-      execute: async (args) => {
-        const q = str(args.line);
-        if (!q) return err("Provide a line code or name.");
-        const lines = await fetchLines();
-        const upper = q.toUpperCase();
-        const match =
-          lines.find((l) => l.code.toUpperCase() === upper) ??
-          lines.find((l) => l.name.toLowerCase() === q.toLowerCase()) ??
-          lines.find((l) => l.name.toLowerCase().includes(q.toLowerCase()));
-        if (!match) return err(`Line "${q}" not found. Use list_metro_lines to see valid lines.`);
-        const stations = await fetchLineStations(match.code);
-        navigate(`/line/${encodeURIComponent(match.code)}`);
-        return ok({ line: match, stations });
-      },
-    });
+      { readOnlyHint: true },
+    );
 
-    register({
-      name: "show_network_map",
-      description:
-        "Open the full Delhi Metro network map in the UI and return a summary: line station counts, total stations and interchange stations.",
-      inputSchema: { type: "object", properties: {} },
-      execute: async () => {
-        const { lines } = await fetchNetwork();
-        const seen = new Map<string, { name: string; lines: string[]; interchange: boolean }>();
-        for (const l of lines) {
-          for (const s of l.stations) {
-            const cur = seen.get(s.code);
-            if (!cur) seen.set(s.code, { name: s.name, lines: [...s.lines], interchange: s.interchange });
-            else {
-              cur.lines = [...new Set([...cur.lines, ...s.lines])];
-              cur.interchange = cur.interchange || s.interchange;
+    register(
+      {
+        name: "show_network_map",
+        description:
+          "Open the full Delhi Metro network map in the UI and return a summary: line station counts, total stations and interchange stations.",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => {
+          const { lines } = await fetchNetwork();
+          const seen = new Map<string, { name: string; lines: string[]; interchange: boolean }>();
+          for (const l of lines) {
+            for (const s of l.stations) {
+              const cur = seen.get(s.code);
+              if (!cur) seen.set(s.code, { name: s.name, lines: [...s.lines], interchange: s.interchange });
+              else {
+                cur.lines = [...new Set([...cur.lines, ...s.lines])];
+                cur.interchange = cur.interchange || s.interchange;
+              }
             }
           }
-        }
-        const interchanges = [...seen.entries()]
-          .filter(([, s]) => s.interchange || s.lines.length > 1)
-          .map(([code, s]) => ({ code, ...s }));
-        navigate("/map");
-        return ok({
-          lines: lines.map((l) => ({ code: l.code, name: l.name, stations: l.stations.length })),
-          totalStations: seen.size,
-          interchangeCount: interchanges.length,
-          interchanges: interchanges.slice(0, 60),
-        });
+          const interchanges = [...seen.entries()]
+            .filter(([, s]) => s.interchange || s.lines.length > 1)
+            .map(([code, s]) => ({ code, ...s }));
+          navigate("/map");
+          return ok({
+            lines: lines.map((l) => ({ code: l.code, name: l.name, stations: l.stations.length })),
+            totalStations: seen.size,
+            interchangeCount: interchanges.length,
+            interchanges: interchanges.slice(0, 60),
+          });
+        },
       },
-    });
+      { readOnlyHint: true },
+    );
 
-    register({
-      name: "get_network_status",
-      description: "Check when the Delhi Metro network data was last refreshed, with station/edge/line counts.",
-      inputSchema: { type: "object", properties: {} },
-      execute: async () => ok(await fetchStatus()),
-    });
+    register(
+      {
+        name: "get_network_status",
+        description: "Check when the Delhi Metro network data was last refreshed, with station/edge/line counts.",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ok(await fetchStatus()),
+      },
+      { readOnlyHint: true },
+    );
 
     return () => {
-      for (const name of names) {
+      for (const c of controllers) {
         try {
-          mc.unregisterTool(name);
+          c.abort();
         } catch {
           // ignore
         }
