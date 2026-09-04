@@ -65,6 +65,13 @@ export interface RouteResultDto {
   transfers: number;
 }
 
+export type RoutePreference =
+  | "time"
+  | "distance"
+  | "stations"
+  | "fare"
+  | "transfers";
+
 interface NodeState {
   cost: number;
   prev?: string;
@@ -167,6 +174,7 @@ export class GraphDO {
   private async handleRoute(url: URL): Promise<Response> {
     const from = url.searchParams.get("from") ?? "";
     const to = url.searchParams.get("to") ?? "";
+    const pref = (url.searchParams.get("pref") ?? "time") as RoutePreference;
     if (!from || !to) return Response.json({ error: "from/to required" }, { status: 400 });
     if (from === to) {
       return Response.json({
@@ -180,12 +188,98 @@ export class GraphDO {
       });
     }
     await this.ensureLoaded();
-    const result = this.dijkstra(from, to);
+    const result =
+      pref === "fare"
+        ? this.pickCheapest(from, to)
+        : this.dijkstra(from, to, pref);
     if (!result) return Response.json({ error: "No route found" }, { status: 404 });
     return Response.json(result);
   }
 
-  private dijkstra(from: string, to: string): RouteResultDto | null {
+  /** Cheapest fare: a lower fare bracket always means shorter distance, so
+   *  run distance-optimal searches within progressively larger brackets. */
+  private pickCheapest(from: string, to: string): RouteResultDto | null {
+    const distanceBest = this.dijkstra(from, to, "distance");
+    if (!distanceBest) return null;
+    const thresholds = [...new Set(this.brackets.map((b) => b.maxDistanceKm))].sort(
+      (a, b) => a - b,
+    );
+    for (const maxKm of thresholds) {
+      if (distanceBest.totalDistanceKm <= maxKm) return distanceBest;
+      const candidate = this.dijkstraWithin(from, to, "distance", maxKm);
+      if (candidate) return candidate;
+    }
+    return distanceBest;
+  }
+
+  private dijkstraWithin(
+    from: string,
+    to: string,
+    pref: RoutePreference,
+    maxKm: number,
+  ): RouteResultDto | null {
+    if (!this.stations.has(from) || !this.stations.has(to)) return null;
+    const cost = new Map<string, NodeState>();
+    const distKm = new Map<string, number>();
+    const visited = new Set<string>();
+    cost.set(from, { cost: 0 });
+    distKm.set(from, 0);
+
+    const weight = (edge: GraphEdge, curLine: string | undefined) =>
+      this.edgeWeight(edge, curLine, pref);
+
+    while (true) {
+      let current: string | null = null;
+      let best = Infinity;
+      for (const [code, st] of cost) {
+        if (!visited.has(code) && st.cost < best) {
+          best = st.cost;
+          current = code;
+        }
+      }
+      if (current === null) break;
+      if (current === to) break;
+      visited.add(current);
+
+      const curDist = distKm.get(current) ?? Infinity;
+      for (const edge of this.edges.get(current) ?? []) {
+        if (visited.has(edge.to)) continue;
+        const cur = cost.get(current)!;
+        const nextDist = curDist + edge.dist;
+        if (nextDist > maxKm) continue;
+        const newCost = cur.cost + weight(edge, cur.prevLine);
+        const existing = cost.get(edge.to);
+        if (!existing || newCost < existing.cost) {
+          cost.set(edge.to, { cost: newCost, prev: current, prevLine: edge.line });
+          distKm.set(edge.to, nextDist);
+        }
+      }
+    }
+
+    return this.buildResult(from, to, cost);
+  }
+
+  private edgeWeight(
+    edge: GraphEdge,
+    curLine: string | undefined,
+    pref: RoutePreference,
+  ): number {
+    const transfer = curLine !== undefined && curLine !== edge.line;
+    switch (pref) {
+      case "distance":
+        return edge.dist;
+      case "stations":
+        return 1;
+      case "transfers":
+        return transfer ? 100 : edge.time / 100;
+      case "fare":
+      case "time":
+      default:
+        return edge.time + (transfer ? 4 : 0);
+    }
+  }
+
+  private dijkstra(from: string, to: string, pref: RoutePreference): RouteResultDto | null {
     if (!this.stations.has(from) || !this.stations.has(to)) return null;
     const dist = new Map<string, NodeState>();
     const visited = new Set<string>();
@@ -208,7 +302,7 @@ export class GraphDO {
       for (const edge of neighbors) {
         if (visited.has(edge.to)) continue;
         const cur = dist.get(current)!;
-        const newCost = cur.cost + edge.time;
+        const newCost = cur.cost + this.edgeWeight(edge, cur.prevLine, pref);
         const existing = dist.get(edge.to);
         if (!existing || newCost < existing.cost) {
           dist.set(edge.to, { cost: newCost, prev: current, prevLine: edge.line });
@@ -216,6 +310,14 @@ export class GraphDO {
       }
     }
 
+    return this.buildResult(from, to, dist);
+  }
+
+  private buildResult(
+    from: string,
+    to: string,
+    dist: Map<string, NodeState>,
+  ): RouteResultDto | null {
     const target = dist.get(to);
     if (!target || target.cost === Infinity) return null;
 

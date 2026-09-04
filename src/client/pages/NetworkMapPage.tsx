@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -63,6 +63,17 @@ export default function NetworkMapPage() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [view, setView] = useState({ x: 0, y: 0, w: VIEW_W, h: VIEW_H });
   const [selected, setSelected] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const panRef = useRef<{
+    pointerId: number;
+    startVX: number;
+    startVY: number;
+    startVW: number;
+    startVH: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
 
   const model = useMemo(() => {
     const xs: number[] = [];
@@ -127,6 +138,7 @@ export default function NetworkMapPage() {
   }, [lines]);
 
   const visiblePaths = model.linePaths.filter((lp) => !hidden.has(lp.line.code));
+  const visibleCodes = new Set(visiblePaths.flatMap((lp) => lp.pts.map((p) => p.code)));
   const selectedStation = selected
     ? model.stations.find((s) => s.code === selected) ?? null
     : null;
@@ -143,15 +155,152 @@ export default function NetworkMapPage() {
     });
   };
 
-  const zoom = (factor: number) => {
-    setView((v) => {
-      const cx = v.x + v.w / 2;
-      const cy = v.y + v.h / 2;
-      const w = Math.min(VIEW_W * 1.5, Math.max(VIEW_W * 0.05, v.w * factor));
-      const h = (w * v.h) / v.w;
-      return { x: cx - w / 2, y: cy - h / 2, w, h };
-    });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ dist: number } | null>(null);
+
+  const clampView = (v: { x: number; y: number; w: number; h: number }) => {
+    const w = Math.min(VIEW_W * 1.5, Math.max(VIEW_W * 0.03, v.w));
+    const h = (w * v.h) / Math.max(1, v.w);
+    const overX = VIEW_W * 0.6;
+    const overY = VIEW_H * 0.6;
+    return {
+      w,
+      h,
+      x: Math.min(VIEW_W + overX - w, Math.max(-overX, v.x)),
+      y: Math.min(VIEW_H + overY - h, Math.max(-overY, v.y)),
+    };
   };
+
+  const toSvg = (clientX: number, clientY: number) => {
+    const el = svgRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const v = viewRef.current;
+    return {
+      x: v.x + ((clientX - rect.left) / Math.max(1, rect.width)) * v.w,
+      y: v.y + ((clientY - rect.top) / Math.max(1, rect.height)) * v.h,
+      rect,
+    };
+  };
+
+  const zoomAtSvg = (sx: number, sy: number, factor: number) => {
+    const v = viewRef.current;
+    const w = Math.min(VIEW_W * 1.5, Math.max(VIEW_W * 0.03, v.w * factor));
+    const h = (w * v.h) / v.w;
+    const x = sx - ((sx - v.x) * w) / v.w;
+    const y = sy - ((sy - v.y) * h) / v.h;
+    setView(clampView({ x, y, w, h }));
+  };
+
+  const zoom = (factor: number) => {
+    const v = viewRef.current;
+    const cx = v.x + v.w / 2;
+    const cy = v.y + v.h / 2;
+    const w = Math.min(VIEW_W * 1.5, Math.max(VIEW_W * 0.03, v.w * factor));
+    const h = (w * v.h) / v.w;
+    setView(clampView({ x: cx - w / 2, y: cy - h / 2, w, h }));
+  };
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const p = toSvg(e.clientX, e.clientY);
+        if (!p) return;
+        zoomAtSvg(p.x, p.y, Math.exp(e.deltaY * 0.0028));
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const v = viewRef.current;
+      const scaleX = v.w / Math.max(1, rect.width);
+      const scaleY = v.h / Math.max(1, rect.height);
+      setView((prev) =>
+        clampView({
+          ...prev,
+          x: prev.x + e.deltaX * scaleX,
+          y: prev.y + e.deltaY * scaleY,
+        }),
+      );
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    if (pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      pinchRef.current = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
+    }
+    panRef.current = {
+      pointerId: e.pointerId,
+      startVX: viewRef.current.x,
+      startVY: viewRef.current.y,
+      startVW: viewRef.current.w,
+      startVH: viewRef.current.h,
+      originX: e.clientX,
+      originY: e.clientY,
+      moved: false,
+    };
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const prev = pinchRef.current;
+      const cx = (a.x + b.x) / 2;
+      const cy = (a.y + b.y) / 2;
+      const p = toSvg(cx, cy);
+      pinchRef.current = { dist };
+      if (prev && prev.dist > 0 && p && dist > 0) {
+        zoomAtSvg(p.x, p.y, prev.dist / dist);
+      }
+      if (panRef.current) panRef.current.moved = true;
+      return;
+    }
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== e.pointerId) return;
+    const el = svgRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const scaleX = pan.startVW / Math.max(1, rect.width);
+    const scaleY = pan.startVH / Math.max(1, rect.height);
+    const dxPx = e.clientX - pan.originX;
+    const dyPx = e.clientY - pan.originY;
+    if (Math.abs(dxPx) + Math.abs(dyPx) < 3 && !pan.moved) return;
+    pan.moved = true;
+    setView((v) =>
+      clampView({
+        ...v,
+        x: pan.startVX - dxPx * scaleX,
+        y: pan.startVY - dyPx * scaleY,
+      }),
+    );
+  };
+
+  const endPan = (e: React.PointerEvent) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (panRef.current?.pointerId === e.pointerId) panRef.current = null;
+  };
+
+  const onDoubleClick = (e: React.MouseEvent) => {
+    const p = toSvg(e.clientX, e.clientY);
+    if (!p) return;
+    zoomAtSvg(p.x, p.y, 0.55);
+  };
+
+  const showLabels = view.w < VIEW_W * 0.5;
+  const showAllLabels = view.w < VIEW_W * 0.22;
+  const labelSize = view.w / 48;
 
   const resetView = () => {
     setView({ x: 0, y: 0, w: VIEW_W, h: VIEW_H });
@@ -267,14 +416,21 @@ export default function NetworkMapPage() {
                   <RotateCcw size={14} strokeWidth={2.2} />
                 </button>
               </div>
-              <span className="map-hint">Tap a station for details</span>
+              <span className="map-hint">Drag to pan · scroll / pinch to zoom · tap a station</span>
             </div>
 
             <svg
+              ref={svgRef}
               viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
               className="map-svg"
               role="img"
               aria-label="Delhi Metro network map"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={endPan}
+              onPointerCancel={endPan}
+              onDoubleClick={onDoubleClick}
+              style={{ cursor: panRef.current ? "grabbing" : "grab", touchAction: "none" }}
             >
               {visiblePaths.map(({ line, d }) => (
                 <path
@@ -289,32 +445,36 @@ export default function NetworkMapPage() {
                 />
               ))}
               {model.stations.map((s) => {
-                const onHiddenLine =
-                  s.lines.length > 0 && s.lines.every((c) => hidden.has(c));
-                if (onHiddenLine) return null;
+                if (!visibleCodes.has(s.code)) return null;
+                const visibleLines = s.lines.filter((c) => !hidden.has(c));
                 const isSel = selected === s.code;
-                const r = s.interchange
+                const visInterchange = visibleLines.length > 1;
+                const r = visInterchange
                   ? view.w / 130
                   : view.w / 200;
+                const showThis = showAllLabels || visInterchange || isSel;
                 return (
                   <g
                     key={s.code}
-                    onClick={() => setSelected(isSel ? null : s.code)}
+                    onClick={() => {
+                      if (panRef.current?.moved) return;
+                      setSelected(isSel ? null : s.code);
+                    }}
                     className="map-station"
                   >
                     <circle
                       cx={s.x}
                       cy={s.y}
-                      r={r * 3}
+                      r={Math.max(r * 3, labelSize * 0.9)}
                       fill="transparent"
                     />
                     <circle
                       cx={s.x}
                       cy={s.y}
                       r={r}
-                      fill={s.interchange ? "#0b0b1a" : "#cbd5e1"}
-                      stroke={s.interchange ? "#fbbf24" : "#0b0b1a"}
-                      strokeWidth={s.interchange ? r * 0.55 : r * 0.3}
+                      fill={visInterchange ? "#0b0b1a" : "#cbd5e1"}
+                      stroke={visInterchange ? "#fbbf24" : "#0b0b1a"}
+                      strokeWidth={visInterchange ? r * 0.55 : r * 0.3}
                     />
                     {isSel && (
                       <circle
@@ -325,6 +485,21 @@ export default function NetworkMapPage() {
                         stroke="#34d399"
                         strokeWidth={r * 0.4}
                       />
+                    )}
+                    {showLabels && showThis && (
+                      <text
+                        x={s.x + r * 2.2}
+                        y={s.y + labelSize * 0.35}
+                        fontSize={labelSize * (visInterchange || isSel ? 1 : 0.85)}
+                        fontWeight={visInterchange || isSel ? 700 : 500}
+                        fill={isSel ? "#6ee7b7" : visInterchange ? "#fde68a" : "#e2e8f0"}
+                        stroke="rgba(5,5,15,0.9)"
+                        strokeWidth={labelSize * 0.12}
+                        paintOrder="stroke"
+                        pointerEvents="none"
+                      >
+                        {s.name}
+                      </text>
                     )}
                   </g>
                 );

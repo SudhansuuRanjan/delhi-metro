@@ -7,6 +7,7 @@ import {
   fetchNetwork,
   planRoute,
   fetchStatus,
+  type RoutePreference,
   type StationRef,
   type LineRef,
   type RouteResult,
@@ -57,8 +58,12 @@ export function useStation(code: string) {
 }
 
 export function useRouteMutation() {
-  return useMutation<RouteResult, Error, { from: string; to: string }>({
-    mutationFn: ({ from, to }) => planRoute(from, to),
+  return useMutation<
+    RouteResult,
+    Error,
+    { from: string; to: string; pref?: RoutePreference }
+  >({
+    mutationFn: ({ from, to, pref }) => planRoute(from, to, pref),
   });
 }
 

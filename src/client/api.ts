@@ -105,11 +105,22 @@ export async function fetchStation(code: string): Promise<StationDetail> {
   return getJson(`/api/station/${code}`);
 }
 
-export async function planRoute(from: string, to: string): Promise<RouteResult> {
+export type RoutePreference =
+  | "time"
+  | "distance"
+  | "stations"
+  | "fare"
+  | "transfers";
+
+export async function planRoute(
+  from: string,
+  to: string,
+  pref: RoutePreference = "time",
+): Promise<RouteResult> {
   const res = await fetch("/api/route", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to }),
+    body: JSON.stringify({ from, to, pref }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };

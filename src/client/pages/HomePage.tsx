@@ -5,6 +5,8 @@ import {
   ArrowRight,
   ArrowUpDown,
   ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Heart,
   History,
@@ -19,7 +21,17 @@ import {
   useRouteMutation,
   useSyncStatus,
 } from "../hooks";
-import type { RouteResult } from "../api";
+import type { RoutePreference, RouteResult } from "../api";
+
+const PREF_KEY = "delhiMetro_v2_pref";
+
+const PREF_OPTIONS: { value: RoutePreference; label: string; hint: string }[] = [
+  { value: "time", label: "Fastest", hint: "Least travel time" },
+  { value: "distance", label: "Shortest distance", hint: "Fewest kilometres" },
+  { value: "stations", label: "Fewest stops", hint: "Fewest stations" },
+  { value: "fare", label: "Cheapest", hint: "Lowest fare" },
+  { value: "transfers", label: "Fewest transfers", hint: "Least interchanges" },
+];
 
 interface SavedRoute {
   from: string;
@@ -79,6 +91,12 @@ export default function HomePage() {
   const [showRecent, setShowRecent] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
   const [result, setResult] = useState<RouteResult | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [pref, setPref] = useState<RoutePreference>(() =>
+    getFromStorage<RoutePreference>(PREF_KEY, "time"),
+  );
 
   const stationOptions = useMemo(
     () => stations.map((s) => ({ value: s.code, label: s.name })),
@@ -100,12 +118,38 @@ export default function HomePage() {
     setSearchParams(params, { replace: true });
   }
 
+  function setPrefAndPersist(next: RoutePreference) {
+    setPref(next);
+    saveToStorage(PREF_KEY, next);
+    if (from && to && from !== to) runSearch(from, to, next);
+  }
+
   // Auto-search when URL params change (deep links, back/forward, share links).
   // Reading recent via ref avoids re-triggering when runSearch updates it.
   const recentRef = useRef(recent);
+  const prefRef = useRef(pref);
   useEffect(() => {
     recentRef.current = recent;
   }, [recent]);
+  useEffect(() => {
+    prefRef.current = pref;
+  }, [pref]);
+
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const update = () => {
+      setCanScrollLeft(el.scrollLeft > 4);
+      setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      el.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [lines.length]);
 
   useEffect(() => {
     if (from && to && from !== to) {
@@ -114,9 +158,13 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to]);
 
-  async function runSearch(fromId: string, toId: string) {
+  async function runSearch(fromId: string, toId: string, usePref?: RoutePreference) {
     try {
-      const r = await routeMutation.mutateAsync({ from: fromId, to: toId });
+      const r = await routeMutation.mutateAsync({
+        from: fromId,
+        to: toId,
+        pref: usePref ?? prefRef.current,
+      });
       setResult(r);
       const entry: SavedRoute = {
         from: fromId,
@@ -340,25 +388,55 @@ export default function HomePage() {
             <span>Explore the network</span>
             <span className="section-rule" />
           </div>
-          <div className="lines-strip">
-            {lines.map((l) => (
-              <Link
-                key={l.code}
-                to={`/line/${l.code}`}
-                className="line-badge"
-                style={{
-                  backgroundColor: `${l.color}25`,
-                  color: l.color,
-                  border: `1px solid ${l.color}40`,
-                }}
-              >
-                <span
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ backgroundColor: l.color }}
-                />
-                {l.name}
-              </Link>
-            ))}
+          <div className="lines-scroller">
+            <button
+              type="button"
+              className={`lines-nav lines-nav-left ${canScrollLeft ? "" : "hidden"}`}
+              aria-label="Scroll lines left"
+              tabIndex={canScrollLeft ? 0 : -1}
+              onClick={() =>
+                stripRef.current?.scrollBy({
+                  left: -240,
+                  behavior: "smooth",
+                })
+              }
+            >
+              <ChevronLeft size={16} strokeWidth={2.4} />
+            </button>
+            <div className="lines-strip" ref={stripRef}>
+              {lines.map((l) => (
+                <Link
+                  key={l.code}
+                  to={`/line/${l.code}`}
+                  className="line-badge"
+                  style={{
+                    backgroundColor: `${l.color}25`,
+                    color: l.color,
+                    border: `1px solid ${l.color}40`,
+                  }}
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: l.color }}
+                  />
+                  {l.name}
+                </Link>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={`lines-nav lines-nav-right ${canScrollRight ? "" : "hidden"}`}
+              aria-label="Scroll lines right"
+              tabIndex={canScrollRight ? 0 : -1}
+              onClick={() =>
+                stripRef.current?.scrollBy({
+                  left: 240,
+                  behavior: "smooth",
+                })
+              }
+            >
+              <ChevronRight size={16} strokeWidth={2.4} />
+            </button>
           </div>
         </div>
       )}
@@ -628,38 +706,57 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="flex flex-row items-center gap-4">
-          {result && (
-            <button
-              type="button"
-              onClick={copyShareLink}
-              className="action-btn shrink-0 text-slate-400"
-              title="Copy share link"
-              aria-label="Copy share link"
-            >
-              <Link2 size={16} strokeWidth={2.2} />
-            </button>
-          )}
+        <div className="planner-actions">
+          <div className="pref-row">
+            <label className="pref-select-wrap" title="Route preference">
+              <span className="pref-select-tag">Preference</span>
+              <select
+                value={pref}
+                onChange={(e) => setPrefAndPersist(e.target.value as RoutePreference)}
+                className="pref-select"
+                aria-label="Route preference"
+              >
+                {PREF_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value} title={o.hint}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="pref-icon-actions">
+              {result && (
+                <button
+                  type="button"
+                  onClick={copyShareLink}
+                  className="action-btn shrink-0 text-slate-400"
+                  title="Copy share link"
+                  aria-label="Copy share link"
+                >
+                  <Link2 size={16} strokeWidth={2.2} />
+                </button>
+              )}
 
-          {result && (
-            <button
-              type="button"
-              onClick={() => toggleFavorite(result.from, result.to)}
-              className={`action-btn shrink-0 ${isFavorite ? "text-rose-400" : "text-slate-400"}`}
-              title={isFavorite ? "Remove from favorites" : "Add to favorites"}
-              aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-            >
-              <Heart
-                size={16}
-                strokeWidth={2.2}
-                fill={isFavorite ? "currentColor" : "none"}
-              />
-            </button>
-          )}
+              {result && (
+                <button
+                  type="button"
+                  onClick={() => toggleFavorite(result.from, result.to)}
+                  className={`action-btn shrink-0 ${isFavorite ? "text-rose-400" : "text-slate-400"}`}
+                  title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                  aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                >
+                  <Heart
+                    size={16}
+                    strokeWidth={2.2}
+                    fill={isFavorite ? "currentColor" : "none"}
+                  />
+                </button>
+              )}
+            </div>
+          </div>
 
           <button
             disabled={routeMutation.isPending}
-            className="btn-primary flex-1 min-w-0 sm:flex-none sm:w-auto flex items-center justify-center gap-2"
+            className="btn-primary min-w-0 w-full sm:w-auto flex items-center justify-center gap-2"
           >
             {routeMutation.isPending ? (
               <>

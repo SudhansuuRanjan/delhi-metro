@@ -313,15 +313,20 @@ app.get("/api/network", async (c) => {
 
 // Route planning via the Durable Object (in-memory graph)
 app.post("/api/route", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { from?: string; to?: string };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    from?: string;
+    to?: string;
+    pref?: string;
+  };
   const from = (body.from ?? "").toUpperCase();
   const to = (body.to ?? "").toUpperCase();
+  const pref = (body.pref ?? "time").toLowerCase();
   if (!from || !to) return c.json({ error: "from/to required" }, 400);
   if (from === to) return c.json({ error: "same station" }, 400);
 
   const id = c.env.GRAPH.idFromName("network");
   const stub = c.env.GRAPH.get(id);
-  const url = `http://graph/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  const url = `http://graph/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&pref=${encodeURIComponent(pref)}`;
   const res = await stub.fetch(url);
   const json = (await res.json()) as unknown;
   return c.json(json, res.status as 200 | 400 | 404 | 500);
